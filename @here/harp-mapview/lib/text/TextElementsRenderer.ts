@@ -749,6 +749,10 @@ export class TextElementsRenderer {
             textCanvas.textRenderStyle = textElement.renderStyle!;
             textCanvas.textLayoutStyle = textElement.layoutStyle!;
 
+            // if (textElement.text.localeCompare("Berlin")) {
+            //     continue;
+            // }
+
             switch (elementType) {
                 case TextElementType.PoiLabel:
                     this.addPoiLabel(
