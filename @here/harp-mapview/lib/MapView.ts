@@ -66,6 +66,7 @@ import { ThemeLoader } from "./ThemeLoader";
 import { Tile } from "./Tile";
 import { MapViewUtils } from "./Utils";
 import { ResourceComputationType, VisibleTileSet, VisibleTileSetOptions } from "./VisibleTileSet";
+import { FontCatalogLoader } from "./text/FontCatalogLoader";
 
 declare const process: any;
 
@@ -3183,6 +3184,7 @@ export class MapView extends THREE.EventDispatcher {
             new TextCanvasFactory(this.m_renderer),
             this.m_poiManager,
             new PoiRendererFactory(this),
+            new FontCatalogLoader(this.m_theme),
             this.m_theme,
             this.m_options
         );
