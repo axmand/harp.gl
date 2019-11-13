@@ -1549,7 +1549,7 @@ export class TextElementsRenderer {
         let iconSpaceAvailable = true;
 
         // Check if icon should be rendered at this zoomLevel
-        let renderIcon =
+        const renderIcon =
             poiInfo !== undefined &&
             MathUtils.isClamped(
                 this.m_viewState.zoomLevel,
@@ -1684,17 +1684,39 @@ export class TextElementsRenderer {
             const textIsOptional: boolean =
                 pointLabel.poiInfo !== undefined && pointLabel.poiInfo.textIsOptional === true;
 
-            const textIsFadingIn = textRenderState!.isFadingIn();
-            const textIsFadingOut = textRenderState!.isFadingOut();
-            const textSpaceAvailable = !this.m_screenCollisions.isAllocated(tempBox2D);
-            const textVisible =
-                groupState.visited &&
-                (pointLabel.textMayOverlap ||
-                    textSpaceAvailable ||
-                    textIsFadingIn ||
-                    textIsFadingOut);
+            const textSpaceAvailable =
+                pointLabel.textMayOverlap || !this.m_screenCollisions.isAllocated(tempBox2D);
+            const textRejected = !groupState.visited || !textSpaceAvailable;
 
-            if (textVisible) {
+            if (textRejected && !labelState.visible) {
+                if (placementStats) {
+                    placementStats.numPoiTextsInvisible++;
+                }
+                return false;
+            }
+
+            const textWillFadeOut =
+                textRejected && textRenderState!.isVisible() && !textRenderState!.isFadingOut();
+
+            if (textWillFadeOut) {
+                const textStartedFadeOut = textRenderState!.checkStartFadeOut(
+                    this.m_viewState.frameNumber,
+                    renderParams.time
+                );
+                renderParams.fadeAnimationRunning =
+                    renderParams.fadeAnimationRunning || textStartedFadeOut;
+
+                const iconWillFadeOut =
+                    (!renderIcon || !textIsOptional) && iconRenderState.isVisible();
+
+                if (iconWillFadeOut) {
+                    iconRenderState.startFadeOut(this.m_viewState.frameNumber, renderParams.time);
+                }
+            }
+
+            const textNeedsDraw = textSpaceAvailable || textRenderState!.isFading();
+
+            if (textNeedsDraw) {
                 // Compute the TextBufferObject when we know we're gonna render this label.
                 if (pointLabel.textBufferObject === undefined) {
                     pointLabel.textBufferObject = textCanvas.createTextBufferObject(
@@ -1703,15 +1725,14 @@ export class TextElementsRenderer {
                 }
 
                 // Allocate collision info if needed.
-                if (!textIsFadingOut && pointLabel.textReservesSpace) {
+                if (!textRenderState!.isFadingOut() && pointLabel.textReservesSpace) {
                     this.m_screenCollisions.allocate(tempBox2D);
                 }
 
                 // Do not actually render (just allocate space) if camera is moving and
                 // renderTextDuringMovements is not true.
                 if (
-                    (textIsFadingIn ||
-                        textIsFadingOut ||
+                    (textRenderState!.isFading() ||
                         !this.m_viewState.cameraIsMoving ||
                         poiInfo === undefined ||
                         poiInfo.renderTextDuringMovements === true) &&
@@ -1733,7 +1754,9 @@ export class TextElementsRenderer {
                     }
 
                     renderParams.fadeAnimationRunning =
-                        renderParams.fadeAnimationRunning || textIsFadingOut || textFading;
+                        renderParams.fadeAnimationRunning ||
+                        textRenderState!.isFadingOut() ||
+                        textFading;
 
                     const opacity = textRenderState!.opacity;
                     const backgroundIsVisible =
@@ -1760,40 +1783,6 @@ export class TextElementsRenderer {
                 if (placementStats) {
                     placementStats.numRenderedPoiTexts++;
                 }
-            } else if (!renderIcon || !textIsOptional) {
-                // If the text is not visible nor optional, we won't render the icon neither.
-
-                renderIcon = false;
-                if (pointLabel.poiInfo === undefined || iconRenderState.isVisible()) {
-                    if (pointLabel.poiInfo !== undefined) {
-                        iconRenderState.startFadeOut(
-                            this.m_viewState.frameNumber,
-                            renderParams.time
-                        );
-                    }
-                    if (textRenderState!.isVisible()) {
-                        const iconStartedFadeOut = textRenderState!.checkStartFadeOut(
-                            this.m_viewState.frameNumber,
-                            renderParams.time
-                        );
-                        renderParams.fadeAnimationRunning =
-                            renderParams.fadeAnimationRunning || iconStartedFadeOut;
-                    }
-                } else {
-                    if (placementStats) {
-                        placementStats.numPoiTextsInvisible++;
-                    }
-                    return false;
-                }
-            }
-            // If the label is currently visible, fade it out.
-            else if (textRenderState!.isVisible()) {
-                const iconStartedFadeOut = textRenderState!.checkStartFadeOut(
-                    this.m_viewState.frameNumber,
-                    renderParams.time
-                );
-                renderParams.fadeAnimationRunning =
-                    renderParams.fadeAnimationRunning || iconStartedFadeOut;
             }
         }
         // ... and render the icon (if any).
