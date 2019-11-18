@@ -82,6 +82,7 @@ export class TextElementState {
                 renderState.reset();
             }
         }
+        this.m_viewDistance = undefined;
     }
 
     /**
