@@ -615,10 +615,6 @@ export class TextElementsRenderer {
             return false;
         }
 
-        const textElementStates = groupState.sortedTextElementStates(
-            this.m_viewState.maxVisibilityDist
-        );
-
         const shieldGroups: number[][] = [];
 
         const temp: TempParams = {
@@ -629,7 +625,7 @@ export class TextElementsRenderer {
         };
         const hiddenKinds = this.m_viewState.hiddenGeometryKinds;
 
-        for (const textElementState of textElementStates) {
+        for (const textElementState of groupState.textElementStates) {
             if (pass === Pass.PersistentLabels) {
                 if (placementStats) {
                     ++placementStats.total;
@@ -1212,9 +1208,6 @@ export class TextElementsRenderer {
             const textElementGroupState = groupStates[i];
             if (placementStats) {
                 ++placementStats.totalGroups;
-                if (textElementGroupState.needsSorting) {
-                    ++placementStats.resortedGroups;
-                }
             }
 
             const newPriority = textElementGroupState.priority;
