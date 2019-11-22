@@ -56,6 +56,7 @@ import {
 } from "./TextElementsRendererOptions";
 import { TextElementState } from "./TextElementState";
 import { TextElementStateCache } from "./TextElementStateCache";
+import { TextElementType } from "./TextElementType";
 import { DEFAULT_FONT_CATALOG_NAME, TextStyleCache } from "./TextStyleCache";
 import { UpdateStats } from "./UpdateStats";
 import { ViewState } from "./ViewState";
@@ -654,9 +655,10 @@ export class TextElementsRenderer {
                 continue;
             }
 
+            const elementVisible = textElementState.visible;
             if (
-                (pass === Pass.PersistentLabels && !textElementState.visible) ||
-                (pass === Pass.NewLabels && textElementState.visible)
+                (pass === Pass.PersistentLabels && !elementVisible) ||
+                (pass === Pass.NewLabels && elementVisible)
             ) {
                 continue;
             }
@@ -682,7 +684,8 @@ export class TextElementsRenderer {
                 continue;
             }
 
-            const isPathLabel = textElement.isPathLabel;
+            const elementType = textElement.type;
+            const isPathLabel = elementType === TextElementType.PathLabel;
 
             // For paths, check if the label may fit.
             if (isPathLabel) {
@@ -777,39 +780,37 @@ export class TextElementsRenderer {
             textCanvas.textRenderStyle = textElement.renderStyle!;
             textCanvas.textLayoutStyle = textElement.layoutStyle!;
 
-            // Place a POI...
-            if (textElement.isPoiLabel) {
-                this.addPoiLabel(
-                    textElementState,
-                    groupState,
-                    poiRenderer,
-                    textCanvas,
-                    renderParams,
-                    temp
-                );
-            }
-            // ... a line marker...
-            else if (textElement.isLineMarker) {
-                this.addLineMarkerLabel(
-                    textElementState,
-                    groupState,
-                    poiRenderer,
-                    shieldGroups,
-                    textCanvas,
-                    renderParams,
-                    temp
-                );
-            }
-            // ... or a path label.
-            else if (isPathLabel) {
-                this.addPathLabel(
-                    textElementState,
-                    groupState,
-                    tempScreenPoints,
-                    textCanvas,
-                    renderParams,
-                    temp
-                );
+            switch (elementType) {
+                case TextElementType.PoiLabel:
+                    this.addPoiLabel(
+                        textElementState,
+                        groupState,
+                        poiRenderer,
+                        textCanvas,
+                        renderParams,
+                        temp
+                    );
+                    break;
+                case TextElementType.LineMarker:
+                    this.addLineMarkerLabel(
+                        textElementState,
+                        groupState,
+                        poiRenderer,
+                        shieldGroups,
+                        textCanvas,
+                        renderParams,
+                        temp
+                    );
+                    break;
+                case TextElementType.PathLabel:
+                    this.addPathLabel(
+                        textElementState,
+                        groupState,
+                        tempScreenPoints,
+                        textCanvas,
+                        renderParams,
+                        temp
+                    );
             }
         }
         return true;
@@ -1294,8 +1295,6 @@ export class TextElementsRenderer {
             }
             const layer = textCanvas.getLayer(textElement.renderOrder || DEFAULT_TEXT_CANVAS_LAYER);
 
-            const isPathLabel = textElement.path !== undefined && !textElement.isLineMarker;
-
             // Trigger the glyph load if needed.
             if (textElement.loadingState === undefined) {
                 textElement.loadingState = LoadingState.Requested;
@@ -1355,7 +1354,7 @@ export class TextElementsRenderer {
 
             // Place text.
             let textPath;
-            if (!isPathLabel) {
+            if (!(textElement.type === TextElementType.PathLabel)) {
                 // Adjust the label positioning.
                 tempScreenPosition.x = screenXOrigin + textElement.position.x * screenSize.width;
                 tempScreenPosition.y = screenYOrigin - textElement.position.y * screenSize.height;
@@ -1841,12 +1840,12 @@ export class TextElementsRenderer {
         temp: TempParams
     ): void {
         const lineMarkerLabel = labelState.element;
+        const path = lineMarkerLabel.points as THREE.Vector3[];
 
         // Early exit if the line marker doesn't have the necessary data.
         const poiInfo = lineMarkerLabel.poiInfo!;
         if (
-            lineMarkerLabel.path === undefined ||
-            lineMarkerLabel.path.length === 0 ||
+            path.length === 0 ||
             !poiRenderer.prepareRender(lineMarkerLabel, this.m_viewState.zoomLevel)
         ) {
             return;
@@ -1870,7 +1869,6 @@ export class TextElementsRenderer {
 
         // Process markers (with shield groups).
         if (minDistanceSqr > 0 && shieldGroup !== undefined) {
-            const path = lineMarkerLabel.path;
             for (let pointIndex = 0; pointIndex < path.length; ++pointIndex) {
                 const point = path[pointIndex];
                 // Only process labels frustum-clipped labels
@@ -1914,7 +1912,6 @@ export class TextElementsRenderer {
         }
         // Process markers (without shield groups).
         else {
-            const path = lineMarkerLabel.path;
             for (let pointIndex = 0; pointIndex < path.length; ++pointIndex) {
                 const point = path[pointIndex];
                 // Only process labels frustum-clipped labels
@@ -2064,7 +2061,7 @@ export class TextElementsRenderer {
         // Fade-in after skipping rendering during movement.
         // NOTE: Shouldn't this only happen once we know the label is gonna be visible?
         if (
-            labelState.textRenderState!.state === FadingState.Undefined ||
+            labelState.textRenderState!.isUndefined() ||
             labelState.textRenderState!.lastFrameNumber < this.m_viewState.frameNumber - 1
         ) {
             labelState.textRenderState!.startFadeIn(
@@ -2125,7 +2122,7 @@ export class TextElementsRenderer {
         screenPoints.length = 0;
         let anyPointVisible = false;
 
-        for (const pt of textElement.path!) {
+        for (const pt of textElement.points as THREE.Vector3[]) {
             // Skip invisible points at the beginning of the path.
             const screenPoint = anyPointVisible
                 ? this.m_screenProjector.project(pt, tempScreenPosition)
