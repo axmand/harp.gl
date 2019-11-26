@@ -505,11 +505,6 @@ export class TopViewClipPlanesEvaluator extends ElevationBasedClipPlanesEvaluato
  * between camera __look at__ vector and the ground surface normal.
  */
 export class TiltViewClipPlanesEvaluator extends TopViewClipPlanesEvaluator {
-    /**
-     * Helper [[THREE.Plane]] instance to speed up calculations (limits allocations required).
-     */
-    protected m_tmpPlane = new THREE.Plane();
-
     evaluateClipPlanes(mapView: MapView): ViewRanges {
         // Different algorithms are used for spherical and planar projections.
         if (mapView.projection.type === ProjectionType.Spherical) {
@@ -717,6 +712,12 @@ export class TiltViewClipPlanesEvaluator extends TopViewClipPlanesEvaluator {
         return viewRanges;
     }
 
+    private getDistanceToHorizon(height: number): number {
+        // Calculate distance to horizon with Pythagorean theorem
+        // d = √(2rh + h²)
+        return Math.sqrt(2 * EarthConstants.EQUATORIAL_RADIUS * height + height * height);
+    }
+
     private evaluateSphericalProj(camera: THREE.Camera, projection: Projection): ViewRanges {
         assert(projection.type === ProjectionType.Spherical);
         const viewRanges = { ...this.minimumViewRange };
@@ -736,105 +737,79 @@ export class TiltViewClipPlanesEvaluator extends TopViewClipPlanesEvaluator {
             const halfFovAngle = THREE.Math.degToRad((camera.fov / 2) * aspect);
             viewRanges.near *= Math.cos(halfFovAngle);
         }
-        // For far plane we need to find tangent to sphere which gives the maximum
-        // visible distance with regards to sphere curvature and camera position.
-        const worldOrigin = new THREE.Vector3(0, 0, 0);
-        // Acquire camera to origin vector.
-        const cameraToOrigin = worldOrigin.sub(camera.position);
-        // Extract camera X, Y, Z orientation axes into tmp vectors array.
-        camera.matrixWorld.extractBasis(
-            this.m_tmpVectors[0],
-            this.m_tmpVectors[1],
-            this.m_tmpVectors[2]
-        );
-        const xaxis = this.m_tmpVectors[0];
-        const yaxis = this.m_tmpVectors[1];
-        // Extend the far plane by the margin along the sphere normal (radius).
-        // In order to calculate far plane distance we need to find sphere tangent
-        // line that passes thru camera position, method explanation may be found in
-        // TopViewClipPlanesEvaluator.evaluateDistanceSphericalProj() method.
+
+        // For the calculation of the far plane the problem can be simplified to 2D
+        // to calculate the worst case. The maximum view distance is assumed to be
+        // the distance from the camera to the geometric horizon plus
+        // the distance from the highest elevation to the geometric horizon.
+        // The sightline between camera and a hypothetical elevation behind the
+        // geometric horizon is a tangent of the sphere, i.e., rectangular triangles are formed.
+        // Both distances to the geometric horizon can thus be calculated with Pythagorean theorem.
+        //
+        // Another rectangular triangle is formed between look at, far plane and the sightline.
+        // Distance to far plane can thus be calculated with angle between look at and sightline
+        // and the maximum view distance.
+        //         , - ~ ~ ~ - ,
+        //     , '               ' ,          E
+        //   ,___________.___________,______. farplane for elevation
+        //  ,            .   r + e    , '  /
+        // ,             .     ,  '    ,  /
+        // ,             . O '         , / te = distance elevation to horizon
+        // ,             | .           ,/
+        //  ,            |   .  r     ,/
+        //   ,         r |      .    ,
+        //     ,_________|________, '_____ farplane for horizon
+        //       ' -_, _ | _ ,  ' / T
+        //     near      |      /
+        //             h |    / t = distance camera to horizon
+        //               |  /
+        //     look at ↑ |/  ↗ sightline to horizon
+        //               C
+
+        // Use distance to geometric horizon as base for max view distance
+        const maxViewDistance =
+            this.getDistanceToHorizon(cameraAltitude) +
+            this.getDistanceToHorizon(this.maxElevation);
+
+        // Calculate angle between look at and surface normal
+        const cameraToOrigin = this.m_tmpVectors[0]
+            .set(0, 0, 0)
+            .sub(camera.position)
+            .normalize();
+        const lookAt = this.m_tmpVectors[1];
+        camera.getWorldDirection(lookAt).normalize();
+        const cosAlpha1 = cameraToOrigin.dot(lookAt);
+        const alpha1 = Math.acos(THREE.Math.clamp(cosAlpha1, -1.0, 1.0));
+
+        // Calculate angle between surface normal and tangent.
         const r = EarthConstants.EQUATORIAL_RADIUS;
-        const d = cameraToOrigin.length();
-        const dNorm = this.m_tmpVectors[2].copy(cameraToOrigin).multiplyScalar(1 / d);
+        const sinAlpha2 = r / (r + cameraAltitude);
+        const alpha2 = Math.asin(THREE.Math.clamp(sinAlpha2, -1.0, 1.0));
 
-        const sinAlpha = r / d;
-        const alpha = Math.asin(sinAlpha);
-        const cosAlpha = Math.sqrt(1 - sinAlpha * sinAlpha);
+        // Calculate angle between look at and tangent.
+        const alpha = Math.abs(alpha2 - alpha1);
+        const cosAlpha = Math.cos(alpha);
 
-        // Apply tangent vector length onto camera to origin vector.
-        let td: THREE.Vector3;
-        // There may be situations when maximum elevation remains below sea level (< 0), or
-        // is negligible, in such cases simply apply tangent distance to camera to origin vector.
-        if (this.maxElevation < epsilon) {
-            // This may be calculated by several methods, firstly:
-            // t_d = d_norm * |t|,
-            // where:
-            // |t| = sqrt(|d|^2 - |r|^2), or
-            // |t| = cos(alpha) * |d|
-            // By simplifying t_d equation with the second condition, we get:
-            // t_d = d_norm * cos(alpha) * |d|, where d = d_norm * |d|
-            // t_d = d * cos(alpha)
-            // Cause cameraToOrigin is no longer needed re-use it to calculate td.
-            td = cameraToOrigin.multiplyScalar(cosAlpha);
-        }
-        // Second case takes into account the elevation above the ground.
-        else {
-            // Here the length of the tangent is extended with 'te' vector that allows to see
-            // elevated geometry beyond the tangent (horizon line), see
-            // TopViewClipPlanesEvaluator for explanations.
-            // t_d = d_norm * |t + te|,
-            // where:
-            // |t| = cos(alpha) * |d|
-            // |te| = sqrt((r+e)^2 - r^2)
-            // Which reduces to:
-            // |te| = sqrt(2*r*e + e^2)
-            const t = cosAlpha * d;
-            const te = Math.sqrt(2 * r * this.maxElevation - this.maxElevation * this.maxElevation);
-            // Re-use pre-allocated vector.
-            td = cameraToOrigin.copy(dNorm).multiplyScalar(t + te);
-        }
-        // For tangent, oriented in the direction to origin, we then apply
-        // rotation to it on every rotation axes using already known tangent angle,
-        // the angle that defines maximum visibility along the sphere surface.
-        // This gives us the tangent rays in all major directions.
-        const ry = this.m_tmpQuaternion.setFromAxisAngle(yaxis.cross(dNorm), alpha);
-        const tdry = td.clone().applyQuaternion(ry);
+        // Set far plane so that a hypothetical elevation behind the horizon is on far plane.
+        viewRanges.far = cosAlpha * maxViewDistance;
 
-        const rx = this.m_tmpQuaternion.setFromAxisAngle(xaxis.cross(dNorm), alpha);
-        const tdrx = td.clone().applyQuaternion(rx);
-
-        const rx2 = this.m_tmpQuaternion.copy(rx).inverse();
-        // Cause td vector in no longer needed, reuse it applying quaternion to it.
-        const tdrx2 = td.applyQuaternion(rx2);
-
-        // Rotated tangents are then added to camera position thus defining far plane
-        // position and orientation - it is enough to have three co-planar points to
-        // define the plane.
-        // p1 = camera.position + tdrx
-        // p2 = camera.position + tdry
-        // p3 = camera.position + tdrx2
-        // const farPlane = new THREE.Plane().setFromCoplanarPoints(p1, p2, p3);
-        // viewRanges.far = farPlane.distanceToPoint(camera.position);
-
-        // This of course may be simplified by moving calculus entirely to camera space,
-        // because far plane is indeed defined in that space anyway:
-        const farPlane = this.m_tmpPlane.setFromCoplanarPoints(tdrx, tdry, tdrx2);
-        viewRanges.far = farPlane.constant;
-        // Take into account largest depression assumed, that may be further then
-        // tangent based far plane distance.
+        // Apply the constraints.
         const farMin = cameraAltitude - this.minElevation;
-        // Finally apply the constraints.
         viewRanges.near = Math.max(viewRanges.near, this.nearMin);
         viewRanges.far = Math.max(viewRanges.far, farMin);
-        // Apply margins
+
+        // Apply margins.
         const nearFarMargin = (this.nearFarMarginRatio * (viewRanges.near + viewRanges.far)) / 2;
         viewRanges.near = Math.max(viewRanges.near - nearFarMargin / 2, this.nearMin);
         viewRanges.far = Math.max(
             viewRanges.far + nearFarMargin / 2,
             viewRanges.near + nearFarMargin
         );
+
+        // Set minimum and maximum view range.
         viewRanges.minimum = this.nearMin;
         viewRanges.maximum = viewRanges.far;
+
         return viewRanges;
     }
 }

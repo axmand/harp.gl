@@ -51,7 +51,7 @@ export namespace CameraOrbitExample {
     // end:harp_gl_camera_orbit_example_1.ts
 
     const gui = new GUI({ width: 300 });
-    gui.add(options, "tilt", 0, 80, 0.1);
+    gui.add(options, "tilt", 0, 60, 0.1);
     gui.add(options, "distance", 300, 60000, 1);
     gui.add(options, "globe").onChange(() => {
         map.projection = options.globe ? sphereProjection : mercatorProjection;
