@@ -712,9 +712,19 @@ export class TiltViewClipPlanesEvaluator extends TopViewClipPlanesEvaluator {
         return viewRanges;
     }
 
+    /**
+     * Computes furthest distance from an object at given height
+     * to the geometrical horizon of earth.
+     * The geometrical horizon is on the clipping point of a tangent
+     * of the earth that goes through the object.
+     * @param height Height of an observer or object above sea level.
+     * @return Furthest distance to geometrical horizon
+     */
     private getDistanceToHorizon(height: number): number {
-        // Calculate distance to horizon with Pythagorean theorem
+        // Calculate distance to horizon with:
         // d = √(2rh + h²)
+        // See: https://en.wikipedia.org/wiki/Horizon#Geometrical_model
+        // for further information.
         return Math.sqrt(2 * EarthConstants.EQUATORIAL_RADIUS * height + height * height);
     }
 
