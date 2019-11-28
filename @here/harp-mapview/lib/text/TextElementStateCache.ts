@@ -15,7 +15,12 @@ import { TextElementType } from "./TextElementType";
  * world space than this value are treated as the same label. Valid within a single datasource.
  * Used to identify duplicate labels in overlapping tiles.
  */
-const MAX_LABEL_DUPLICATE_DIST_SQ = 100;
+const MAX_LABEL_DUPLICATE_DIST_SQ = 1000000;
+
+const tmpCachedDuplicate: { entry: TextElementState[]; index: number } = {
+    entry: [],
+    index: -1
+};
 
 /**
  * Caches the state of text element groups currently rendered as well as the text element states
@@ -82,22 +87,36 @@ export class TextElementStateCache {
      * @param disableFading `True` if fading is currently disabled, `false` otherwise.
      * @returns `True` if any textElementGroup was evicted from cache, false otherwise.
      */
-    update(time: number, clearVisited: boolean, disableFading: boolean) {
+    update(time: number, disableFading: boolean, findReplacements: boolean) {
+        const replaceCallback = findReplacements ? this.replaceElement.bind(this) : undefined;
+
         let anyEviction = false;
         for (const [key, groupState] of this.m_referenceMap.entries()) {
-            const visible = groupState.updateFading(time, disableFading);
+            const visible = groupState.updateFading(
+                time,
+                disableFading,
+                groupState.visited ? undefined : replaceCallback
+            );
             const keep: boolean = visible || groupState.visited;
 
             if (!keep) {
                 this.m_referenceMap.delete(key);
                 this.m_sortedGroupStates = undefined;
                 anyEviction = true;
-            } else if (clearVisited) {
-                groupState.visited = false;
             }
         }
-        this.m_textMap.clear();
         return anyEviction;
+    }
+
+    // TODO: Replace by visitedFrameNr.
+    clearVisistedState() {
+        for (const groupState of this.m_referenceMap.values()) {
+            groupState.visited = false;
+        }
+    }
+
+    clearTextCache() {
+        this.m_textMap.clear();
     }
 
     /**
@@ -122,52 +141,53 @@ export class TextElementStateCache {
             return true;
         }
 
-        // Point labels may have duplicates (as can path labels), Identify them
-        // and keep the one we already display.
+        const cacheResult = this.findDuplicate(elementState);
 
-        const cachedEntries = this.m_textMap.get(element.text);
-
-        if (cachedEntries === undefined) {
-            // No labels found with the same text.
+        if (cacheResult === undefined) {
+            // Text not found so far, add this element to cache.
             this.m_textMap.set(element.text, [elementState]);
             return true;
         }
 
-        // Other labels found with the same text. Check if they're near enough to be considered
-        // duplicates.
-        const entryCount = cachedEntries.length;
-        const elementPosition = element.points as THREE.Vector3;
-        let duplicateIndex: number = -1;
-        for (let i = 0; i < entryCount; ++i) {
-            const cachedElementPosition = cachedEntries[i].element.points as THREE.Vector3;
-
-            if (
-                elementPosition.distanceToSquared(cachedElementPosition) <
-                MAX_LABEL_DUPLICATE_DIST_SQ
-            ) {
-                duplicateIndex = i;
-                break;
-            }
-        }
-
-        if (duplicateIndex === -1) {
-            // No duplicate found.
-            cachedEntries.push(elementState);
+        if (cacheResult.index === -1) {
+            // No duplicate found among elements with same text,add this one to cache.
+            cacheResult.entry.push(elementState);
             return true;
         }
 
         // Duplicate found, check whether there's a label already visible and keep that one.
-        const cachedDuplicate = cachedEntries[duplicateIndex];
+        const cachedDuplicate = cacheResult.entry[cacheResult.index];
 
         if (!cachedDuplicate.visible && elementState.visible) {
             // New label is visible, substitute the cached label.
-            cachedEntries[duplicateIndex] = elementState;
-
+            cacheResult.entry[cacheResult.index] = elementState;
+            cachedDuplicate.reset();
             cachedDuplicate.reset();
             return true;
         }
 
         return false;
+    }
+
+    replaceElement(elementState: TextElementState): void {
+        assert(elementState.visible);
+        const element = elementState.element;
+
+        if (element.type !== TextElementType.PoiLabel) {
+            return;
+        }
+
+        const cacheResult = this.findDuplicate(elementState);
+
+        if (cacheResult === undefined || cacheResult.index === -1) {
+            // No replacement found;
+            return;
+        }
+
+        const replacement = cacheResult.entry[cacheResult.index];
+        assert(!replacement.visible);
+
+        replacement.replace(elementState);
     }
 
     /**
@@ -193,5 +213,43 @@ export class TextElementStateCache {
         assert(textElementGroup.elements.length > 0);
         this.m_referenceMap.set(textElementGroup, textElementGroupState);
         this.m_sortedGroupStates = undefined;
+    }
+
+    private findDuplicate(
+        elementState: TextElementState
+    ): { entry: TextElementState[]; index: number } | undefined {
+        const element = elementState.element;
+
+        // Point labels may have duplicates (as can path labels), Identify them
+        // and keep the one we already display.
+
+        const cachedEntries = this.m_textMap.get(element.text);
+
+        if (cachedEntries === undefined) {
+            // No labels found with the same text.
+            return undefined;
+        }
+
+        // Other labels found with the same text. Check if they're near enough to be considered
+        // duplicates.
+        const entryCount = cachedEntries.length;
+        const elementPosition = element.points as THREE.Vector3;
+        let duplicateIndex: number = -1;
+        for (let i = 0; i < entryCount; ++i) {
+            const cachedEntry = cachedEntries[i];
+            const cachedElementPosition = cachedEntry.element.points as THREE.Vector3;
+
+            if (
+                elementPosition.distanceToSquared(cachedElementPosition) <
+                MAX_LABEL_DUPLICATE_DIST_SQ
+            ) {
+                duplicateIndex = i;
+                break;
+            }
+        }
+
+        tmpCachedDuplicate.entry = cachedEntries;
+        tmpCachedDuplicate.index = duplicateIndex;
+        return tmpCachedDuplicate;
     }
 }

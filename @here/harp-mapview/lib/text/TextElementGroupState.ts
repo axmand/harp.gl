@@ -73,12 +73,19 @@ export class TextElementGroupState {
      * @param disableFading `true` if fading is disabled, `false` otherwise.
      * @returns True if any element visible after fading.
      */
-    updateFading(time: number, disableFading: boolean): boolean {
+    updateFading(
+        time: number,
+        disableFading: boolean,
+        visibleElementsCallback?: (e: TextElementState) => void
+    ): boolean {
         let groupVisible = false;
         for (const elementState of this.m_textElementStates) {
             if (elementState !== undefined) {
                 const elementVisible = elementState.updateFading(time, disableFading);
                 groupVisible = groupVisible || elementVisible;
+                if (elementVisible && visibleElementsCallback !== undefined) {
+                    visibleElementsCallback(elementState);
+                }
             }
         }
         return groupVisible;
