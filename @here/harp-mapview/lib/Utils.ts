@@ -688,6 +688,21 @@ export namespace MapViewUtils {
 
     /**
      * Calculates the zoom level, which corresponds to the current distance from
+     * camera to the ground.
+     *
+     * @param mapView Instance of MapView.
+     * @param groundDistance Distance from the ground to the camera
+     */
+    export function calculateZoomLevelFromDistanceToGround(
+        mapView: MapView,
+        groundDistance: number
+    ): number {
+        const cameraPitch = extractAttitude(mapView, mapView.camera).pitch;
+        return calculateZoomLevelFromDistance(groundDistance / Math.cos(cameraPitch), mapView);
+    }
+
+    /**
+     * Calculates the zoom level, which corresponds to the current distance from
      * camera to lookAt point.
      * Therefore the zoom level is a `float` and not an `int`. The height of the camera can be in
      * between zoom levels. By setting the zoom level, you change the height position of the camera
