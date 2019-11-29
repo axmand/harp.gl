@@ -9,36 +9,36 @@ document.getElementById("docs-nav-mobile").href = s3Base + "master/doc/";
 
 const releases = [
     {
-        date: "latest",
-        hash: "master"
+        date: "today",
+        hash: "master",
+        version: "dev"
     }
 ];
 const dropdown = document.querySelector("select[name=versions]");
 
-fetch("https://www.harp.gl/releases.json")
+fetch("releases.json")
     .then(res => res.json())
     .then(res => {
         releases.push(...res);
         releases.forEach(release => {
             const option = document.createElement("option");
-            option.innerText = release.date;
+            option.innerText = release.version;
             dropdown.appendChild(option);
         });
 
         dropdown.onchange = () => {
             const selected = dropdown.querySelector("option:checked");
-            const hash = releases.filter(x => x.date === selected.innerText)[0].hash;
-            const date = releases.filter(x => x.date === selected.innerText)[0].date;
+            const {hash, version} = releases.filter(x => x.version === selected.innerText)[0];
 
             //Update examples button and link
             document.querySelector(".examples-link").href = s3Base + hash + "/examples/";
             document.querySelector(".examples-link").innerText =
-                "Examples" + (date !== "master" ? ` (${date})` : "");
+                `Examples (${version})`;
 
             //Update docs button and link
             document.querySelector(".docs-link").href = s3Base + hash + "/doc/";
             document.querySelector(".docs-link").innerText =
-                "Documentation" + (date !== "master" ? ` (${date})` : "");
+                `Documentation (${version})`;
         };
     })
     .catch(() => {
